@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P Ghost Chat</title>
+    <!-- Connecting PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#121212">
+    <link rel="apple-touch-icon" href="icon.png">
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; padding: 20px; display: flex; flex-direction: column; align-items: center; margin: 0; }
+        .container { max-width: 500px; width: 100%; background: #1e1e1e; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; }
+        h2 { text-align: center; color: #00ffcc; margin-top: 0; }
+        textarea { width: 100%; height: 70px; background: #2d2d2d; color: white; border: 1px solid #444; border-radius: 6px; padding: 8px; resize: none; box-sizing: border-box; font-family: monospace; font-size: 11px; }
+        button { width: 100%; background: #00ffcc; color: #111; border: none; padding: 12px; margin: 8px 0; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:active { transform: scale(0.98); }
+        .step { margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        h3 { margin: 5px 0; font-size: 15px; color: #eee; }
+        #chat-box { height: 250px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 6px; padding: 10px; margin-bottom: 10px; display: flex; flex-direction: column; }
+        .msg { padding: 8px 12px; margin: 4px 0; border-radius: 8px; max-width: 80%; word-break: break-all; font-size: 14px; }
+        .me { background: #00ffcc; color: #111; align-self: flex-end; }
+        .friend { background: #333; color: white; align-self: flex-start; }
+        .chat-input-area { display: flex; gap: 10px; width: 100%; }
+        .chat-input-area textarea { height: 44px; font-family: sans-serif; font-size: 14px; }
+        .chat-input-area button { width: 80px; margin: 0; height: 44px; }
+        .hidden { display: none; }
+        .status { text-align: center; font-size: 12px; color: #888; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🔒 P2P Ghost Chat</h2>
+    <div id="status" class="status">Offline / Not Connected</div>
+    
+    <!-- Setup Area -->
+    <div id="setup-area">
+        <div class="step">
+            <h3>Step 1: Connection Shuru Karo</h3>
+            <button id="create-btn">Create Invite Token (Offer)</button>
+        </div>
+
+        <div class="step">
+            <h3>Step 2: Token Share Karein</h3>
+            <textarea id="local-code" placeholder="Aapka token yahan dikhega..." readonly></textarea>
+        </div>
+
+        <div class="step">
+            <h3>Step 3: Dost ka Token Dalein</h3>
+            <textarea id="remote-code" placeholder="Dost ka token yahan paste karein..."></textarea>
+            <button id="connect-btn">Connect</button>
+        </div>
+    </div>
+
+    <!-- Chat Area -->
+    <div id="chat-area" class="hidden">
+        <div id="chat-box"></div>
+        <div class="chat-input-area">
+            <textarea id="msg-input" placeholder="Type a message..."></textarea>
+            <button id="send-btn">Send</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // PWA Service Worker Registration
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('sw.js')
+                .then(reg => console.log('Service Worker Registered!', reg.scope))
+                .catch(err => console.log('Service Worker Failed!', err));
+        });
+    }
+
+    // WebRTC Logic
+    const peerConnection = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    let dataChannel;
+    const statusDiv = document.getElementById('status');
+    const createBtn = document.getElementById('create-btn');
+    const connectBtn = document.getElementById('connect-btn');
+    const sendBtn = document.getElementById('send-btn');
+    const localCodeTxt = document.getElementById('local-code');
+    const remoteCodeTxt = document.getElementById('remote-code');
+    const msgInput = document.getElementById('msg-input');
+    const chatBox = document.getElementById('chat-box');
+
+    function setupDataChannel(channel) {
+        dataChannel = channel;
+        dataChannel.onopen = () => {
+            statusDiv.innerText = "🟢 Connected Direct (Encrypted)";
+            statusDiv.style.color = "#00ffcc";
+            document.getElementById('setup-area').classList.add('hidden');
+            document.getElementById('chat-area').classList.remove('hidden');
+        };
+        dataChannel.onclose = () => {
+            statusDiv.innerText = "🔴 Connection Lost";
+            statusDiv.style.color = "#ff4444";
+        };
+        dataChannel.onmessage = (e) => appendMessage(e.data, 'friend');
+    }
+
+    createBtn.addEventListener('click', async () => {
+        statusDiv.innerText = "Generating token...";
+        dataChannel = peerConnection.createDataChannel("chat");
+        setupDataChannel(dataChannel);
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        peerConnection.onicecandidate = (e) => {
+            if (!e.candidate) {
+                localCodeTxt.value = btoa(JSON.stringify(peerConnection.localDescription));
+                statusDiv.innerText = "Token ready! Copy Step 2.";
+            }
+        };
+    });
+
+    connectBtn.addEventListener('click', async () => {
+        const rawCode = remoteCodeTxt.value.trim();
+        if (!rawCode) return alert("Pehle token daaliye!");
+
+        const parsedSignal = JSON.parse(atob(rawCode));
+
+        if (parsedSignal.type === "offer") {
+            peerConnection.ondatachannel = (e) => setupDataChannel(e.channel);
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(parsedSignal));
+            
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+
+            peerConnection.onicecandidate = (e) => {
+                if (!e.candidate) {
+                    localCodeTxt.value = btoa(JSON.stringify(peerConnection.localDescription));
+                    statusDiv.innerText = "Answer token ready! Return to friend.";
+                    alert("Aapka Answer Token taiyar hai! Step 2 se copy karke dost ko wapas bhejein.");
+                }
+            };
+        } else if (parsedSignal.type === "answer") {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(parsedSignal));
+        }
+    });
+
+    sendBtn.addEventListener('click', () => {
+        const text = msgInput.value.trim();
+        if (!text || !dataChannel || dataChannel.readyState !== "open") return;
+
+        dataChannel.send(text);
+        appendMessage(text, 'me');
+        msgInput.value = '';
+    });
+
+    function appendMessage(text, sender) {
+        const div = document.createElement('div');
+        div.classList.add('msg', sender);
+        div.innerText = text;
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+</script>
+</body>
+</html>
+
